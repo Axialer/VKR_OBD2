@@ -2,6 +2,7 @@
 import 'package:path/path.dart' as p;
 import 'package:sqflite/sqflite.dart';
 import '../../core/obd/pid_metadata.dart';
+import '../../core/obd/dtc_hints.dart';
 import '../car_metadata.dart';
 
 class AppDatabase {
@@ -9,7 +10,7 @@ class AppDatabase {
   static final AppDatabase instance = AppDatabase._();
   Database? _db;
 
-  static const int _version = 3;
+  static const int _version = 6;
 
   Future<Database> get database async {
     if (_db != null) return _db!;
@@ -29,6 +30,7 @@ class AppDatabase {
       onCreate: (db, version) async {
         await _createTables(db);
         await _seedPidParameters(db);
+        await _seedDtcReference(db);
         await _seedCarData(db); // 👈 теперь данные тянутся из car_metadata
       },
       onUpgrade: (db, oldVersion, newVersion) async {
@@ -38,6 +40,16 @@ class AppDatabase {
         }
         if (oldVersion < 3) {
           await _updatePidParameters(db);
+        }
+        if (oldVersion < 4) {
+          await _createReferenceTablesV4(db);
+          await _seedDtcReference(db);
+        }
+        if (oldVersion < 5) {
+          await _upgradeMaintenanceNotificationStateV5(db);
+        }
+        if (oldVersion < 6) {
+          await _upgradeSessionMileageStateV6(db);
         }
       },
     );
@@ -68,6 +80,8 @@ CREATE TABLE diagnostic_session (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   car_id INTEGER NOT NULL,
   date_time INTEGER NOT NULL,
+  mileage_at_session INTEGER,
+  obd_distance_with_mil_km INTEGER,
   notes TEXT,
   FOREIGN KEY (car_id) REFERENCES car(id) ON DELETE CASCADE
 )''');
@@ -120,6 +134,8 @@ CREATE TABLE maintenance_operation (
   last_done_date INTEGER,
   next_due_mileage INTEGER,
   next_due_date INTEGER,
+  last_notified_stage TEXT,
+  last_notified_at INTEGER,
   is_completed INTEGER NOT NULL DEFAULT 0,
   FOREIGN KEY (car_id) REFERENCES car(id) ON DELETE CASCADE
 )''');
@@ -127,9 +143,48 @@ CREATE TABLE maintenance_operation (
     await db.execute('CREATE INDEX idx_session_date ON diagnostic_session(date_time)');
     await db.execute('CREATE INDEX idx_maintenance_car ON maintenance_operation(car_id)');
     await db.execute('CREATE INDEX idx_session_param_session ON session_parameter(session_id)');
+    await _createReferenceTablesV4(db);
 
     // Таблицы для марок/моделей/поколений
     await _createNewTablesV2(db);
+  }
+
+  Future<void> _upgradeMaintenanceNotificationStateV5(Database db) async {
+    final columns = await db.rawQuery('PRAGMA table_info(maintenance_operation)');
+    final hasStage = columns.any((c) => c['name'] == 'last_notified_stage');
+    if (!hasStage) {
+      await db.execute('ALTER TABLE maintenance_operation ADD COLUMN last_notified_stage TEXT');
+    }
+    final hasAt = columns.any((c) => c['name'] == 'last_notified_at');
+    if (!hasAt) {
+      await db.execute('ALTER TABLE maintenance_operation ADD COLUMN last_notified_at INTEGER');
+    }
+  }
+
+  Future<void> _upgradeSessionMileageStateV6(Database db) async {
+    final columns = await db.rawQuery('PRAGMA table_info(diagnostic_session)');
+    final hasMileage = columns.any((c) => c['name'] == 'mileage_at_session');
+    if (!hasMileage) {
+      await db.execute('ALTER TABLE diagnostic_session ADD COLUMN mileage_at_session INTEGER');
+    }
+    final hasObdDistance = columns.any((c) => c['name'] == 'obd_distance_with_mil_km');
+    if (!hasObdDistance) {
+      await db.execute('ALTER TABLE diagnostic_session ADD COLUMN obd_distance_with_mil_km INTEGER');
+    }
+  }
+
+  Future<void> _createReferenceTablesV4(Database db) async {
+    await db.execute('''
+CREATE TABLE IF NOT EXISTS dtc_reference (
+  code TEXT PRIMARY KEY,
+  description TEXT NOT NULL,
+  recommendation TEXT,
+  severity INTEGER NOT NULL DEFAULT 2,
+  category TEXT,
+  source TEXT NOT NULL DEFAULT 'fallback',
+  updated_at INTEGER NOT NULL
+)''');
+    await db.execute('CREATE INDEX IF NOT EXISTS idx_dtc_ref_category ON dtc_reference(category)');
   }
 
   Future<void> _createNewTablesV2(Database db) async {
@@ -201,6 +256,65 @@ CREATE TABLE IF NOT EXISTS car_generations (
           'normal_max': meta.normalMax,
         });
       }
+    }
+  }
+
+  Future<void> _seedDtcReference(Database db) async {
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final desc = dtcDescriptionsFallbackRu();
+    final recs = dtcRecommendationsFallbackRu();
+    for (final e in desc.entries) {
+      final code = e.key.toUpperCase();
+      await db.insert('dtc_reference', {
+        'code': code,
+        'description': e.value,
+        'recommendation': recs[code],
+        'severity': _defaultSeverityByCode(code),
+        'category': _categoryByCode(code),
+        'source': 'fallback',
+        'updated_at': now,
+      }, conflictAlgorithm: ConflictAlgorithm.ignore);
+    }
+    for (final e in recs.entries) {
+      final code = e.key.toUpperCase();
+      await db.insert('dtc_reference', {
+        'code': code,
+        'description': desc[code] ?? 'Код зарегистрирован ЭБУ',
+        'recommendation': e.value,
+        'severity': _defaultSeverityByCode(code),
+        'category': _categoryByCode(code),
+        'source': 'fallback',
+        'updated_at': now,
+      }, conflictAlgorithm: ConflictAlgorithm.ignore);
+    }
+  }
+
+  int _defaultSeverityByCode(String code) {
+    if (code == 'P0524' || code == 'P0217') return 3;
+    if (code == 'P0562' || code == 'P0563') return 3;
+    return 2;
+  }
+
+  String _categoryByCode(String code) {
+    if (!code.startsWith('P')) return 'generic';
+    final two = code.length >= 3 ? code.substring(1, 3) : '';
+    switch (two) {
+      case '01':
+      case '02':
+        return 'fuel_air';
+      case '03':
+        return 'ignition';
+      case '04':
+        return 'emission';
+      case '05':
+      case '06':
+        return 'electrical_ecu';
+      case '07':
+      case '08':
+      case '09':
+        return 'transmission';
+      default:
+        return 'generic';
     }
   }
 

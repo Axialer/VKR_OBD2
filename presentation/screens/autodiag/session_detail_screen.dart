@@ -91,6 +91,8 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
                       params: b.params,
                       notes: _notes.text,
                       carLabel: b.head.carLabel,
+                      mileageAtSession: b.head.mileageAtSession,
+                      obdDistanceWithMilKm: b.head.obdDistanceWithMilKm,
                     );
                     await export.sharePdf(file);
                     if (context.mounted) {
@@ -114,6 +116,10 @@ class _SessionDetailScreenState extends State<SessionDetailScreen> {
             padding: const EdgeInsets.all(16),
             children: [
               Text('Авто: ${b.head.carLabel}'),
+              if (b.head.mileageAtSession != null)
+                Text('Пробег на момент сеанса: ${b.head.mileageAtSession} км'),
+              if (b.head.obdDistanceWithMilKm != null)
+                Text('OBD PID 21 (дистанция с MIL): ${b.head.obdDistanceWithMilKm} км'),
               const SizedBox(height: 16),
               const Text('Ошибки', style: TextStyle(fontWeight: FontWeight.bold)),
               if (b.dtcs.isEmpty)
