@@ -189,6 +189,10 @@ class DiagnosticsProvider extends ChangeNotifier {
         final a = int.parse(dataHex.substring(0, 2), radix: 16);
         final b = int.parse(dataHex.substring(2, 4), radix: 16);
         return (a * 256 + b).toDouble();
+      case 0x21: // дистанция с горящей MIL (не общий одометр)
+        final a = int.parse(dataHex.substring(0, 2), radix: 16);
+        final b = int.parse(dataHex.substring(2, 4), radix: 16);
+        return (a * 256 + b).toDouble();
       case 0x34: // напряжение
         final a = int.parse(dataHex.substring(0, 2), radix: 16);
         return a / 100;
@@ -284,11 +288,21 @@ class DiagnosticsProvider extends ChangeNotifier {
   // ------------------- Сохранение сеанса -------------------
   Future<int?> saveSession({required Car car, String notes = ''}) async {
     final snapshot = Map<String, double>.from(livePidValues);
+    int? obdDistanceWithMilKm = snapshot['21']?.round();
+    if (obdDistanceWithMilKm == null && isConnected) {
+      final v = await readPidValue('21');
+      if (v != null) {
+        obdDistanceWithMilKm = v.round();
+        snapshot['21'] = v;
+      }
+    }
     return _repo.saveDiagnosticSession(
       carId: car.id,
       dtcs: liveDtcs,
       pidSnapshot: snapshot,
       notes: notes,
+      mileageAtSession: car.currentMileage,
+      obdDistanceWithMilKm: obdDistanceWithMilKm,
     );
   }
 
