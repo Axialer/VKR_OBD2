@@ -12,6 +12,7 @@ import '../../providers/settings_provider.dart';
 import '../../../core/services/export_service.dart';
 import '../../../core/obd/dtc_hints.dart';
 import 'device_picker_sheet.dart';
+import 'session_detail_screen.dart';
 import 'vin_detection_screen.dart';
 
 class DiagnosticsTab extends StatefulWidget {
@@ -62,6 +63,7 @@ class _DiagnosticsTabState extends State<DiagnosticsTab>
         params: params,
         notes: notes,
         carLabel: carLabel,
+        mileageAtSession: active.currentMileage,
       );
       await export.sharePdf(file);
       await hist.refresh();
@@ -1141,8 +1143,18 @@ class _AutoDiagnosticDialogState extends State<_AutoDiagnosticDialog> {
         if (_finished && _error == null)
           FilledButton(
             onPressed: () {
-              DiagnosticsTab.pendingSubTab = 1;
-              Navigator.of(context).pop();
+              final sid = _result?.sessionId;
+              if (sid == null) {
+                Navigator.of(context).pop();
+                return;
+              }
+              final nav = Navigator.of(context);
+              nav.pop();
+              nav.push(
+                MaterialPageRoute(
+                  builder: (_) => SessionDetailScreen(sessionId: sid),
+                ),
+              );
             },
             child: const Text('Показать ошибки'),
           ),

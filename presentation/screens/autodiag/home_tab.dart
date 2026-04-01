@@ -9,6 +9,7 @@ import '../../providers/maintenance_provider.dart';
 import '../../providers/settings_provider.dart';
 import '../../../core/obd/dtc_hints.dart';
 import 'diagnostics_tab.dart';
+import 'session_detail_screen.dart';
 
 class HomeTab extends StatelessWidget {
   const HomeTab({
@@ -405,8 +406,18 @@ class _AutoDiagnosticDialogState extends State<_AutoDiagnosticDialog> {
         if (_finished && _error == null)
           FilledButton(
             onPressed: () {
-              DiagnosticsTab.pendingSubTab = 1;
-              Navigator.of(context).pop();
+              final sid = _result?.sessionId;
+              if (sid == null) {
+                Navigator.of(context).pop();
+                return;
+              }
+              final nav = Navigator.of(context);
+              nav.pop();
+              nav.push(
+                MaterialPageRoute(
+                  builder: (_) => SessionDetailScreen(sessionId: sid),
+                ),
+              );
             },
             child: const Text('Показать ошибки'),
           ),

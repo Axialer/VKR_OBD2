@@ -154,6 +154,8 @@ class DiagnosticSessionRow {
   final String? notes;
   final String carLabel;
   final int dtcCount;
+  final int? mileageAtSession;
+  final int? obdDistanceWithMilKm;
 
   const DiagnosticSessionRow({
     required this.id,
@@ -162,6 +164,8 @@ class DiagnosticSessionRow {
     this.notes,
     required this.carLabel,
     required this.dtcCount,
+    this.mileageAtSession,
+    this.obdDistanceWithMilKm,
   });
 }
 
@@ -203,6 +207,8 @@ class MaintenanceRow {
   final DateTime? lastDoneDate;
   final int? nextDueMileage;
   final DateTime? nextDueDate;
+  final String? lastNotifiedStage;
+  final DateTime? lastNotifiedAt;
   final int isCompleted;
 
   const MaintenanceRow({
@@ -215,6 +221,8 @@ class MaintenanceRow {
     this.lastDoneDate,
     this.nextDueMileage,
     this.nextDueDate,
+    this.lastNotifiedStage,
+    this.lastNotifiedAt,
     required this.isCompleted,
   });
 
@@ -232,6 +240,10 @@ class MaintenanceRow {
       nextDueMileage: (m['next_due_mileage'] as num?)?.toInt(),
       nextDueDate: (m['next_due_date'] as num?) != null
           ? DateTime.fromMillisecondsSinceEpoch((m['next_due_date'] as num).toInt())
+          : null,
+      lastNotifiedStage: m['last_notified_stage'] as String?,
+      lastNotifiedAt: (m['last_notified_at'] as num?) != null
+          ? DateTime.fromMillisecondsSinceEpoch((m['last_notified_at'] as num).toInt())
           : null,
       isCompleted: (m['is_completed'] as num?)?.toInt() ?? 0,
     );

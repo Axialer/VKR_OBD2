@@ -68,6 +68,8 @@ class ExportService {
     required List<SessionParamRow> params,
     required String notes,
     required String carLabel,
+    int? mileageAtSession,
+    int? obdDistanceWithMilKm,
   }) async {
     final doc = pw.Document();
     final df = DateFormat('yyyy-MM-dd HH:mm');
@@ -114,6 +116,29 @@ class ExportService {
                     ),
                   ],
                 ),
+                if (mileageAtSession != null || obdDistanceWithMilKm != null) ...[
+                  pw.SizedBox(height: 4),
+                  pw.Row(
+                    children: [
+                      pw.Expanded(
+                        child: pw.Text(
+                          mileageAtSession != null
+                              ? 'Пробег (введённый): $mileageAtSession км'
+                              : 'Пробег (введённый): —',
+                          style: baseTextStyle,
+                        ),
+                      ),
+                      pw.Expanded(
+                        child: pw.Text(
+                          obdDistanceWithMilKm != null
+                              ? 'OBD PID 21 (MIL): $obdDistanceWithMilKm км'
+                              : 'OBD PID 21 (MIL): —',
+                          style: baseTextStyle,
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
               ],
             ),
           ),
