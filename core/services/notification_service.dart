@@ -70,17 +70,15 @@ class NotificationService {
     required bool enabled,
     required List<MaintenanceRow> rows,
     required Car car,
-    Future<void> Function(int opId, String stage)? persistStage,
   }) async {
     if (!_inited) await init();
+    await cancelAll();
     if (!enabled) return;
 
+    var i = 0;
     for (final op in rows) {
-      final stage = _notificationStage(op, car.currentMileage);
-      if (stage == null) continue;
-      if (op.lastNotifiedStage == stage) continue;
-
       final st = maintenanceStatus(op, car.currentMileage);
+      if (st == MaintUiStatus.ok) continue;
       final android = AndroidNotificationDetails(
         'autodiag_to',
         'Техобслуживание',
@@ -93,37 +91,12 @@ class NotificationService {
       );
       final details = NotificationDetails(android: android);
       await _plugin.show(
-        op.id,
+        op.id + 1000 * i,
         st == MaintUiStatus.overdue ? 'Просрочено ТО' : 'Скоро ТО',
         _body(op, st, car),
         details,
       );
-      if (persistStage != null) {
-        await persistStage(op.id, stage);
-      }
+      i++;
     }
-  }
-
-  String? _notificationStage(MaintenanceRow op, int currentMileage) {
-    if (op.intervalType == 'date') {
-      final next = op.nextDueDate;
-      if (next == null) return null;
-      final days = next.difference(DateTime.now()).inDays;
-      if (days <= 0) return 'date_overdue';
-      if (days <= 1) return 'date_d1';
-      if (days <= 3) return 'date_d3';
-      if (days <= 5) return 'date_d5';
-      if (days <= 7) return 'date_d7';
-      return null;
-    }
-
-    final next = op.nextDueMileage;
-    if (next == null) return null;
-    final left = next - currentMileage;
-    if (left <= 0) return 'km_overdue';
-    if (left > 10000) return null;
-    final bucket = ((left + 4999) ~/ 5000) * 5000;
-    if (bucket <= 0) return 'km_0';
-    return 'km_$bucket';
   }
 }

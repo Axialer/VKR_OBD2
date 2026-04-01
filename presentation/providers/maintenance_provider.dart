@@ -26,7 +26,6 @@ class MaintenanceProvider extends ChangeNotifier {
           enabled: notifyEnabled,
           rows: items,
           car: car,
-          persistStage: (opId, stage) => _repo.setMaintenanceNotifiedStage(opId, stage),
         );
       } catch (_) {}
     }

@@ -3,7 +3,6 @@ import 'package:provider/provider.dart';
 
 import '../../../data/models/autodiag_models.dart';
 import '../../providers/cars_provider.dart';
-import '../../providers/diagnostics_provider.dart';
 import '../../providers/maintenance_provider.dart';
 import '../../providers/settings_provider.dart';
 
@@ -173,12 +172,78 @@ class _MaintenanceTabState extends State<MaintenanceTab> {
   }
 
   Future<void> _addDialog(BuildContext context, Car car) async {
-    await Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => _MaintenanceAddScreen(car: car),
-      ),
+    final title = TextEditingController();
+    String type = 'mileage';
+    final interval = TextEditingController(text: '10000');
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (ctx, setSt) {
+            return AlertDialog(
+              title: const Text('Новая операция ТО'),
+              content: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    TextField(
+                      controller: title,
+                      decoration: const InputDecoration(labelText: 'Название'),
+                    ),
+                    DropdownButtonFormField<String>(
+                      value: type,
+                      items: const [
+                        DropdownMenuItem(
+                            value: 'mileage', child: Text('Пробег (км)')),
+                        DropdownMenuItem(
+                            value: 'date', child: Text('Интервал (дни)')),
+                      ],
+                      onChanged: (v) => setSt(() => type = v ?? 'mileage'),
+                    ),
+                    TextField(
+                      controller: interval,
+                      keyboardType: TextInputType.number,
+                      decoration: const InputDecoration(labelText: 'Интервал'),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      'База: пробег ${car.currentMileage} км, дата сегодня',
+                      style: Theme.of(ctx).textTheme.bodySmall,
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx),
+                  child: const Text('Отмена'),
+                ),
+                FilledButton(
+                  onPressed: () async {
+                    final val = int.tryParse(interval.text.trim()) ?? 0;
+                    if (title.text.trim().isEmpty || val <= 0) return;
+                    await context.read<MaintenanceProvider>().addOperation(
+                          carId: car.id,
+                          title: title.text.trim(),
+                          intervalType: type,
+                          intervalValue: val,
+                          baselineMileage: car.currentMileage,
+                          baselineDate: DateTime.now(),
+                          car: car,
+                          notifyEnabled:
+                              context.read<SettingsProvider>().maintenanceNotify,
+                        );
+                    if (ctx.mounted) Navigator.pop(ctx);
+                    _reload();
+                  },
+                  child: const Text('Сохранить'),
+                ),
+              ],
+            );
+          },
+        );
+      },
     );
-    _reload();
   }
 
   Future<void> _editDialog(
@@ -188,199 +253,50 @@ class _MaintenanceTabState extends State<MaintenanceTab> {
   ) async {
     final title = TextEditingController(text: op.title);
     final interval = TextEditingController(text: op.intervalValue.toString());
-    String type = op.intervalType;
     await showDialog<void>(
       context: context,
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setSt) => AlertDialog(
-          title: const Text('Редактирование'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(
-                controller: title,
-                decoration: const InputDecoration(labelText: 'Название'),
-              ),
-              DropdownButtonFormField<String>(
-                value: type,
-                items: const [
-                  DropdownMenuItem(value: 'mileage', child: Text('Пробег (км)')),
-                  DropdownMenuItem(value: 'date', child: Text('Интервал (дни)')),
-                ],
-                onChanged: (v) => setSt(() => type = v ?? 'mileage'),
-              ),
-              TextField(
-                controller: interval,
-                keyboardType: TextInputType.number,
-                decoration: InputDecoration(
-                  labelText: type == 'mileage' ? 'Интервал, км' : 'Интервал, дней',
-                ),
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx),
-              child: const Text('Отмена'),
+      builder: (ctx) => AlertDialog(
+        title: const Text('Редактирование'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: title,
+              decoration: const InputDecoration(labelText: 'Название'),
             ),
-            TextButton(
-              onPressed: () async {
-                await maint.deleteOp(op.id);
-                if (ctx.mounted) Navigator.pop(ctx);
-                _reload();
-              },
-              child: Text('Удалить',
-                  style: TextStyle(color: Theme.of(context).colorScheme.error)),
-            ),
-            FilledButton(
-              onPressed: () async {
-                final v = int.tryParse(interval.text.trim());
-                await maint.updateOp(
-                  op.id,
-                  title: title.text.trim(),
-                  intervalValue: v,
-                  intervalType: type,
-                );
-                if (ctx.mounted) Navigator.pop(ctx);
-                _reload();
-              },
-              child: const Text('OK'),
+            TextField(
+              controller: interval,
+              keyboardType: TextInputType.number,
+              decoration: const InputDecoration(labelText: 'Интервал'),
             ),
           ],
         ),
-      ),
-    );
-  }
-}
-
-class _MaintenanceAddScreen extends StatefulWidget {
-  const _MaintenanceAddScreen({required this.car});
-  final Car car;
-
-  @override
-  State<_MaintenanceAddScreen> createState() => _MaintenanceAddScreenState();
-}
-
-class _MaintenanceAddScreenState extends State<_MaintenanceAddScreen> {
-  final _title = TextEditingController();
-  final _interval = TextEditingController(text: '10000');
-  final _baselineMileage = TextEditingController();
-  String _type = 'mileage';
-  DateTime _baselineDate = DateTime.now();
-
-  @override
-  void initState() {
-    super.initState();
-    _baselineMileage.text = widget.car.currentMileage.toString();
-  }
-
-  @override
-  void dispose() {
-    _title.dispose();
-    _interval.dispose();
-    _baselineMileage.dispose();
-    super.dispose();
-  }
-
-  Future<void> _fillFromObd() async {
-    final diag = context.read<DiagnosticsProvider>();
-    final v = await diag.readPidValue('21');
-    if (v == null || !mounted) return;
-    _baselineMileage.text = v.round().toString();
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Подтянут PID 21 (дистанция с MIL). Это не общий одометр.'),
-      ),
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: const Text('Новая операция ТО')),
-      body: ListView(
-        padding: const EdgeInsets.all(16),
-        children: [
-          TextField(
-            controller: _title,
-            decoration: const InputDecoration(labelText: 'Название операции'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Отмена'),
           ),
-          const SizedBox(height: 12),
-          DropdownButtonFormField<String>(
-            value: _type,
-            items: const [
-              DropdownMenuItem(value: 'mileage', child: Text('По пробегу (км)')),
-              DropdownMenuItem(value: 'date', child: Text('По времени (дни)')),
-            ],
-            onChanged: (v) => setState(() => _type = v ?? 'mileage'),
+          TextButton(
+            onPressed: () async {
+              await maint.deleteOp(op.id);
+              if (ctx.mounted) Navigator.pop(ctx);
+              _reload();
+            },
+            child: Text('Удалить',
+                style: TextStyle(color: Theme.of(context).colorScheme.error)),
           ),
-          const SizedBox(height: 12),
-          TextField(
-            controller: _interval,
-            keyboardType: TextInputType.number,
-            decoration: InputDecoration(
-              labelText: _type == 'mileage' ? 'Интервал, км' : 'Интервал, дней',
-            ),
-          ),
-          const SizedBox(height: 12),
-          if (_type == 'mileage') ...[
-            TextField(
-              controller: _baselineMileage,
-              keyboardType: TextInputType.number,
-              decoration: const InputDecoration(labelText: 'Базовый пробег, км'),
-            ),
-            const SizedBox(height: 8),
-            Wrap(
-              spacing: 8,
-              children: [
-                OutlinedButton.icon(
-                  onPressed: _fillFromObd,
-                  icon: const Icon(Icons.sensors),
-                  label: const Text('Подтянуть из OBD'),
-                ),
-                OutlinedButton(
-                  onPressed: () => _baselineMileage.text = widget.car.currentMileage.toString(),
-                  child: const Text('Взять из карточки авто'),
-                ),
-              ],
-            ),
-          ] else
-            ListTile(
-              contentPadding: EdgeInsets.zero,
-              title: const Text('Базовая дата'),
-              subtitle: Text(
-                '${_baselineDate.year.toString().padLeft(4, '0')}-${_baselineDate.month.toString().padLeft(2, '0')}-${_baselineDate.day.toString().padLeft(2, '0')}',
-              ),
-              trailing: const Icon(Icons.calendar_month),
-              onTap: () async {
-                final picked = await showDatePicker(
-                  context: context,
-                  initialDate: _baselineDate,
-                  firstDate: DateTime(2000),
-                  lastDate: DateTime(2100),
-                );
-                if (picked != null) setState(() => _baselineDate = picked);
-              },
-            ),
-          const SizedBox(height: 20),
           FilledButton(
             onPressed: () async {
-              final t = _title.text.trim();
-              final iv = int.tryParse(_interval.text.trim()) ?? 0;
-              if (t.isEmpty || iv <= 0) return;
-              await context.read<MaintenanceProvider>().addOperation(
-                    carId: widget.car.id,
-                    title: t,
-                    intervalType: _type,
-                    intervalValue: iv,
-                    baselineMileage: int.tryParse(_baselineMileage.text.trim()) ?? widget.car.currentMileage,
-                    baselineDate: _baselineDate,
-                    car: widget.car,
-                    notifyEnabled: context.read<SettingsProvider>().maintenanceNotify,
-                  );
-              if (mounted) Navigator.pop(context);
+              final v = int.tryParse(interval.text.trim());
+              await maint.updateOp(
+                op.id,
+                title: title.text.trim(),
+                intervalValue: v,
+              );
+              if (ctx.mounted) Navigator.pop(ctx);
+              _reload();
             },
-            child: const Text('Добавить'),
+            child: const Text('OK'),
           ),
         ],
       ),
