@@ -2,7 +2,6 @@
 
 import 'package:sqflite/sqflite.dart';
 import '../core/obd/dtc_hints.dart';
-import '../core/diagnostics/recommendation_engine.dart';
 import 'db/app_database.dart';
 import 'models/autodiag_models.dart';
 
@@ -151,28 +150,13 @@ class AutodiagRepository {
     required List<LiveDtc> dtcs,
     required Map<String, double> pidSnapshot,
     String notes = '',
-    int? mileageAtSession,
-    int? obdDistanceWithMilKm,
   }) async {
     final db = await _d;
     final now = DateTime.now().millisecondsSinceEpoch;
-    final pidHistory = await _loadPidHistoryByCar(
-      carId: carId,
-      pids: pidSnapshot.keys,
-      limitPerPid: 12,
-    );
-    final recurringDtcs = await _loadRecurringDtcCodes(
-      carId: carId,
-      dtcCodes: dtcs.map((d) => d.code),
-      lookbackSessions: 8,
-    );
-    final engine = const RecommendationEngine();
     return db.transaction<int>((txn) async {
       final sid = await txn.insert('diagnostic_session', {
         'car_id': carId,
         'date_time': now,
-        'mileage_at_session': mileageAtSession,
-        'obd_distance_with_mil_km': obdDistanceWithMilKm,
         'notes': notes,
       });
       for (final d in dtcs) {
@@ -182,12 +166,11 @@ class AutodiagRepository {
           'dtc_id': did,
           'dtc_type': d.type,
         }, conflictAlgorithm: ConflictAlgorithm.replace);
-        final ref = await _findDtcReferenceTxn(txn, d.code);
-        final rec = (ref?['recommendation'] as String?) ?? dtcRecommendationRu(d.code);
+        final rec = dtcRecommendationRu(d.code);
         if (rec != null) {
           await txn.insert('recommendation', {
             'text': rec,
-            'severity': (ref?['severity'] as num?)?.toInt() ?? 2,
+            'severity': 2,
             'session_id': sid,
             'dtc_id': did,
           });
@@ -220,86 +203,8 @@ class AutodiagRepository {
           'timestamp': now,
         });
       }
-
-      // Рекомендации по PID+DTC (расширенный движок).
-      final engineRecs = engine.build(
-        pidSnapshot: pidSnapshot,
-        dtcs: dtcs,
-        pidHistory: pidHistory,
-        recurringDtcs: recurringDtcs,
-      );
-      for (final r in engineRecs) {
-        await txn.insert('recommendation', {
-          'text': r.text,
-          'severity': r.severity,
-          'session_id': sid,
-          'dtc_id': null,
-        });
-      }
       return sid;
     });
-  }
-
-  Future<Map<String, List<double>>> _loadPidHistoryByCar({
-    required int carId,
-    required Iterable<String> pids,
-    int limitPerPid = 10,
-  }) async {
-    final db = await _d;
-    final out = <String, List<double>>{};
-    for (final rawPid in pids) {
-      final pid = rawPid.toUpperCase().padLeft(2, '0');
-      final rows = await db.rawQuery('''
-SELECT sp.value
-FROM session_parameter sp
-JOIN pid_parameter p ON p.id = sp.parameter_id
-JOIN diagnostic_session s ON s.id = sp.session_id
-WHERE s.car_id = ? AND p.pid_code = ?
-ORDER BY sp.timestamp DESC
-LIMIT ?
-''', [carId, pid, limitPerPid]);
-      if (rows.isEmpty) continue;
-      out[pid] = rows.map((r) => (r['value'] as num).toDouble()).toList().reversed.toList();
-    }
-    return out;
-  }
-
-  Future<Set<String>> _loadRecurringDtcCodes({
-    required int carId,
-    required Iterable<String> dtcCodes,
-    int lookbackSessions = 8,
-  }) async {
-    final db = await _d;
-    final out = <String>{};
-    for (final c in dtcCodes) {
-      final code = c.toUpperCase();
-      final rows = await db.rawQuery('''
-SELECT COUNT(*) AS cnt
-FROM session_dtc sd
-JOIN dtc_dictionary d ON d.id = sd.dtc_id
-JOIN diagnostic_session s ON s.id = sd.session_id
-WHERE s.car_id = ? AND d.code = ? AND s.id IN (
-  SELECT id FROM diagnostic_session
-  WHERE car_id = ?
-  ORDER BY date_time DESC
-  LIMIT ?
-)
-''', [carId, code, carId, lookbackSessions]);
-      final cnt = (rows.first['cnt'] as num?)?.toInt() ?? 0;
-      if (cnt >= 2) out.add(code);
-    }
-    return out;
-  }
-
-  Future<Map<String, Object?>?> _findDtcReferenceTxn(Transaction txn, String code) async {
-    final rows = await txn.query(
-      'dtc_reference',
-      where: 'code = ?',
-      whereArgs: [code.toUpperCase()],
-      limit: 1,
-    );
-    if (rows.isEmpty) return null;
-    return rows.first;
   }
 
   Future<int> _ensureDtcTxn(Transaction txn, String code, String description) async {
@@ -322,7 +227,6 @@ WHERE s.car_id = ? AND d.code = ? AND s.id IN (
     final args = carIdFilter != null ? [carIdFilter] : <Object?>[];
     final rows = await db.rawQuery('''
 SELECT s.id, s.car_id, s.date_time, s.notes,
-  s.mileage_at_session, s.obd_distance_with_mil_km,
   (SELECT COUNT(*) FROM session_dtc sd WHERE sd.session_id = s.id) AS dtc_count,
   printf('%s %s', c.brand, c.model) AS car_label
 FROM diagnostic_session s
@@ -339,8 +243,6 @@ ORDER BY s.date_time DESC
       notes: m['notes'] as String?,
       carLabel: m['car_label'] as String? ?? '',
       dtcCount: (m['dtc_count'] as num?)?.toInt() ?? 0,
-      mileageAtSession: (m['mileage_at_session'] as num?)?.toInt(),
-      obdDistanceWithMilKm: (m['obd_distance_with_mil_km'] as num?)?.toInt(),
     ))
         .toList();
   }
@@ -449,8 +351,6 @@ ORDER BY p.pid_code, sp.timestamp ASC
       intervalType == 'date' ? baselineDate.millisecondsSinceEpoch : null,
       'next_due_mileage': nextM,
       'next_due_date': nextD,
-      'last_notified_stage': null,
-      'last_notified_at': null,
       'is_completed': 0,
     });
   }
@@ -469,8 +369,6 @@ ORDER BY p.pid_code, sp.timestamp ASC
     final val = (m['interval_value'] as num).toInt();
     final Map<String, Object?> upd = {
       'is_completed': 0,
-      'last_notified_stage': null,
-      'last_notified_at': null,
     };
     if (type == 'mileage') {
       upd['last_done_mileage'] = currentMileage;
@@ -503,19 +401,6 @@ ORDER BY p.pid_code, sp.timestamp ASC
   Future<void> deleteMaintenance(int id) async {
     final db = await _d;
     await db.delete('maintenance_operation', where: 'id = ?', whereArgs: [id]);
-  }
-
-  Future<void> setMaintenanceNotifiedStage(int opId, String stage) async {
-    final db = await _d;
-    await db.update(
-      'maintenance_operation',
-      {
-        'last_notified_stage': stage,
-        'last_notified_at': DateTime.now().millisecondsSinceEpoch,
-      },
-      where: 'id = ?',
-      whereArgs: [opId],
-    );
   }
 
   Future<List<MaintenanceRow>> listMaintenance(int carId) async {

@@ -82,8 +82,7 @@ class _HistoryTabState extends State<HistoryTab> {
                 leading: const Icon(Icons.receipt_long),
                 title: Text(s.carLabel),
                 subtitle: Text(
-                  '${df.format(s.dateTime)} · DTC: ${s.dtcCount}'
-                  '${s.mileageAtSession != null ? ' · ${s.mileageAtSession} км' : ''}',
+                  '${df.format(s.dateTime)} · DTC: ${s.dtcCount}',
                 ),
                 onTap: () {
                   Navigator.push(

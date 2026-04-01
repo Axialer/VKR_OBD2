@@ -16,9 +16,6 @@ const Map<String, String> kDtcRecommendationsRu = {
   'P0562': 'Проверить аккумулятор, генератор и состояние ремня.',
 };
 
-Map<String, String> dtcDescriptionsFallbackRu() => Map<String, String>.from(kDtcDescriptionsRu);
-Map<String, String> dtcRecommendationsFallbackRu() => Map<String, String>.from(kDtcRecommendationsRu);
-
 String dtcDescriptionRu(String code) {
   final c = code.toUpperCase();
   final fromAsset = DtcCatalog.instance.lookup(c);
